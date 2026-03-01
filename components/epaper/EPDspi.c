@@ -585,7 +585,9 @@ void EPD_DisplayClearFull()
 #ifdef CONFIG_EPD_MODULE_B
 	/* 2.9" Module (B) - tricolor SSD1680 */
 	EPD_2IN9B_Init();
+#ifndef CONFIG_EPD_2IN9B_SKIP_CLEAR
 	EPD_2IN9B_Clear();
+#endif
 #else
 	uint8_t m;
 	EPD_init_Full();

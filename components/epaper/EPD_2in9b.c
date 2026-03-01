@@ -155,10 +155,12 @@ void EPD_2IN9B_Clear(void)
     EPD_SendDataBlock(buf, w * h);
     SendCmd(0x22);
     SendData(
-#ifdef CONFIG_EPD_2IN9B_LUT_C7
-        0xC7  /* alternate LUT - may reduce inverted flashing */
+#if defined(CONFIG_EPD_2IN9B_LUT_F4)
+        0xF4  /* Adafruit default - fewer phases */
+#elif defined(CONFIG_EPD_2IN9B_LUT_C7)
+        0xC7  /* alternate */
 #else
-        0xF7  /* full refresh LUT */
+        0xF7  /* GxEPD2 full refresh */
 #endif
     );
     SendCmd(0x20);
@@ -196,10 +198,12 @@ void EPD_2IN9B_Display(const uint8_t *blackimage, const uint8_t *ryimage)
     }
     SendCmd(0x22);
     SendData(
-#ifdef CONFIG_EPD_2IN9B_LUT_C7
-        0xC7  /* alternate LUT - may reduce inverted flashing */
+#if defined(CONFIG_EPD_2IN9B_LUT_F4)
+        0xF4  /* Adafruit default - fewer phases */
+#elif defined(CONFIG_EPD_2IN9B_LUT_C7)
+        0xC7  /* alternate */
 #else
-        0xF7  /* full refresh LUT */
+        0xF7  /* GxEPD2 full refresh */
 #endif
     );
     SendCmd(0x20);

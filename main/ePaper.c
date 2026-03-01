@@ -354,6 +354,30 @@ void app_main()
 			} \
 		} while(0)
 
+		#define DRAW_STR_X2_RED(rbuf, s, sx, sy) do { \
+			const char *_s = (s); \
+			int _x = (sx); \
+			for (; *_s && _x < W; _s++, _x += CW_X2) { \
+				unsigned char _ch = (unsigned char)*_s; \
+				if (_ch < FONT_8X8_FIRST || _ch >= FONT_8X8_FIRST + FONT_8X8_COUNT) continue; \
+				const uint8_t *_g = font_8x8[_ch - FONT_8X8_FIRST]; \
+				for (int _r = 0; _r < FONT_8X8_CHAR_H; _r++) { \
+					for (int _col = 0; _col < FONT_8X8_CHAR_W; _col++) { \
+						if (_g[_r] & (0x80 >> _col)) { \
+							int _bx = _x + _col * 2, _by = (sy) + _r * 2; \
+							for (int _dy = 0; _dy < 2; _dy++) for (int _dx = 0; _dx < 2; _dx++) { \
+								int _px = _bx + _dx, _py = _by + _dy; \
+								if (_px >= 0 && _px < W && _py >= 0 && _py < H) { \
+									int _bi = (_py * (W/8)) + (_px/8); \
+									(rbuf)[_bi] &= ~(0x80 >> (_px % 8)); \
+								} \
+							} \
+						} \
+					} \
+				} \
+			} \
+		} while(0)
+
 #if defined(CONFIG_EXAMPLE_USE_WIFI)
 		vTaskDelay(3000 / portTICK_RATE_MS);  /* Allow NTP to sync */
 #endif
@@ -491,8 +515,11 @@ void app_main()
 
 			/* Numbers right-aligned, 2x size, no "m" - just "5" or "12" */
 			const int NUM_RIGHT = W - PAD_RIGHT;
-			const int DEST_CHARS = 8;     /* " " + 8 chars fits before number */
+			const int DEST_CHARS = 8;     /* base chars before number */
+			const int DEST_CHARS_1DIGIT = 11;  /* +3 when number is 1 digit */
 			const int OTHER_PREFIX = 4;   /* " SE " or " TL " */
+			const int OTHER_DEST_CHARS = 6;
+			const int OTHER_DEST_CHARS_1DIGIT = 9;
 
 			int y = 2;
 			DRAW_STR_X2(black_buf, time_str, (W - 5*CW_X2) / 2, y);
@@ -502,23 +529,27 @@ void app_main()
 
 			#define DRAW_SECTION(title, line_substr, max_count) do { \
 				DRAW_STR(black_buf, (title), 2, y); \
-				y += LH; \
+				y += LH + SECTION_TOP_PAD; \
 				int _drawn = 0; \
 				for (int _i = 0; _i < n && _drawn < (max_count); _i++) { \
 					if (strstr(arr[_i].line, (line_substr))) { \
-						char _d[9]; \
-						strncpy(_d, arr[_i].destination, DEST_CHARS); \
-						_d[DEST_CHARS] = '\0'; \
 						int _m = arr[_i].ttl_sec / 60; \
-						if (_m < 0) _m = 0; \
+						if (_m <= 1) continue; /* 0 or 1 min left - can't make it */ \
 						if (_m > 99) _m = 99; \
+						int _dc = (_m < 10) ? DEST_CHARS_1DIGIT : DEST_CHARS; \
+						char _d[12]; \
+						strncpy(_d, arr[_i].destination, _dc); \
+						_d[_dc] = '\0'; \
 						char _num[12]; \
-						snprintf(_num, sizeof(_num), "%d", (int)(_m < 0 ? 0 : (_m > 99 ? 99 : _m))); \
+						snprintf(_num, sizeof(_num), "%d", (int)_m); \
 						int _nw = (int)strlen(_num) * CW_X2; \
 						int _nx = NUM_RIGHT - _nw; \
 						DRAW_STR(black_buf, " ", 2, y); \
 						DRAW_STR(black_buf, _d, 2 + CW, y); \
-						DRAW_STR_X2(black_buf, _num, _nx, y); \
+						if (_m > 5) \
+							DRAW_STR_X2_RED(red_buf, _num, _nx, y); \
+						else \
+							DRAW_STR_X2(black_buf, _num, _nx, y); \
 						y += LH_X2; \
 						_drawn++; \
 					} \
@@ -533,14 +564,15 @@ void app_main()
 			int others = 0;
 			for (int i = 0; i < n && others < 2; i++) {
 				if (!strstr(arr[i].line, "Elizabeth") && !strstr(arr[i].line, "DLR")) {
-					char d[9];
-					strncpy(d, arr[i].destination, DEST_CHARS - 2);
-					d[DEST_CHARS - 2] = '\0';
 					int m = arr[i].ttl_sec / 60;
-					if (m < 0) m = 0;
+					if (m <= 1) continue; /* 0 or 1 min left - can't make it */
 					if (m > 99) m = 99;
+					int dc = (m < 10) ? OTHER_DEST_CHARS_1DIGIT : OTHER_DEST_CHARS;
+					char d[10];
+					strncpy(d, arr[i].destination, dc);
+					d[dc] = '\0';
 					char num[12];
-					snprintf(num, sizeof(num), "%d", (int)(m < 0 ? 0 : (m > 99 ? 99 : m)));
+					snprintf(num, sizeof(num), "%d", (int)m);
 					int nw = (int)strlen(num) * CW_X2;
 					int nx = NUM_RIGHT - nw;
 					const char *abbr = strstr(arr[i].line, "Southeastern") ? "SE" : \
@@ -549,7 +581,10 @@ void app_main()
 					DRAW_STR(black_buf, abbr, 2 + CW, y);
 					DRAW_STR(black_buf, " ", 2 + 3*CW, y);
 					DRAW_STR(black_buf, d, 2 + OTHER_PREFIX*CW, y);
-					DRAW_STR_X2(black_buf, num, nx, y);
+					if (m > 5)
+						DRAW_STR_X2_RED(red_buf, num, nx, y);
+					else
+						DRAW_STR_X2(black_buf, num, nx, y);
 					y += LH_X2;
 					others++;
 				}
@@ -591,6 +626,7 @@ void app_main()
 		#undef DRAW_STR
 		#undef DRAW_STR_RED
 		#undef DRAW_STR_X2
+		#undef DRAW_STR_X2_RED
 	}
 #endif
 
@@ -642,9 +678,9 @@ void app_main()
     }
 
 	//=========
-    // Run demo
+    // Run demo (disabled when CONFIG_EPD_MODULE_B - Woolwich arrivals only)
     //=========
-
+#ifndef CONFIG_EPD_MODULE_B
 	/*
 	EPD_DisplayClearFull();
     EPD_DisplayClearPart();
@@ -1051,5 +1087,6 @@ void app_main()
     	EPD_PowerOff();
 		EPD_wait(8000);
     }
+#endif /* !CONFIG_EPD_MODULE_B */
 
 }
