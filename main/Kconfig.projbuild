@@ -1,5 +1,21 @@
 menu "ePaper Display DEMO Configuration"
 
+config EPD_MODULE_B
+    bool "2.9\" e-Paper Module (B) - Tricolor (red/black/white)"
+    default y
+    help
+        Select if using the Waveshare 2.9inch e-Paper Module (B) with
+        red/black/white tricolor display (SSD1680). The default Module
+        is black/white only (SSD1608).
+
+config EPD_2IN9B_V4
+    bool "Module B V4 (newer hardware - try if V3 shows blobs)"
+    depends on EPD_MODULE_B
+    default n
+    help
+        Use V4 init sequence. Check label on back of display - V4 uses
+        different commands. Try this if you get random blinks/blobs.
+
 config SPIFFS_BASE_ADDR
     hex "SPIFFS Base address"
     range 0x100000 0x1FFE000

@@ -13,6 +13,7 @@
 #define _EPDSPI_H_
 
 #include <stdint.h>
+#include "driver/gpio.h"
 #include "spi_master_lobo.h"
 
 #define EPD_DISPLAY_WIDTH	296
@@ -29,6 +30,10 @@
 // if powered directly from Vcc, set this to 0
 #define POWER_Pin	22
 
+// BUSY polarity: 0 = busy when LOW (most common), 1 = busy when HIGH
+// If display never updates, try changing to 1
+#define EPD_BUSY_LEVEL 0
+
 #define DC_VAL (1 << DC_Pin)
 
 #define EPD_CS_0	gpio_set_level(CS_Pin, 0)
@@ -43,8 +48,6 @@
 #define EPD_DC_1	gpio_set_level(DC_Pin, 1)
 
 #define isEPD_BUSY  gpio_get_level(BUSY_Pin)
-
-#define EPD_BUSY_LEVEL 0
 
 // ==================================================
 // Define which spi bus to use VSPI_HOST or HSPI_HOST
@@ -68,6 +71,8 @@ uint8_t LUTDefault_full[31];
 uint8_t lvl_buf[16];
 uint8_t lvl_buf_jpg[16];
 
+void SPI_Write(uint8_t value);  /* Low-level SPI write (used by EPD_2in9b) */
+void EPD_SendDataBlock(const uint8_t *data, uint32_t len);  /* Bulk send for Module B */
 void EPD_wait(uint32_t ms);
 void EPD_DisplaySetFull(uint8_t val);
 void EPD_DisplaySetPart(int xStart, int xEnd, uint8_t yStart, uint8_t yEnd, uint8_t val);

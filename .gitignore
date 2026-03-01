@@ -25,6 +25,8 @@ sdkconfig.lobo
 .settings
 BUILD
 build/
+.cache/
+build_output.txt
 temp/
 local/
 *.dis

@@ -17,9 +17,12 @@
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_heap_alloc_caps.h"
+#include "esp_heap_caps.h"
 #include "soc/spi_reg.h"
 #include "EPDspi.h"
+#ifdef CONFIG_EPD_MODULE_B
+#include "EPD_2in9b.h"
+#endif
 
 #define EPD_DEBUG 1
 
@@ -157,13 +160,23 @@ static void IRAM_ATTR SPI_send_data(uint8_t *data, uint32_t len, uint8_t rep)
 	else if (rep == 0)  _dma_send(data, len);
 	else {
 		// ==== Repeat data, more than 512 bits total ====
-		uint8_t *transbuf = pvPortMallocCaps(len, MALLOC_CAP_DMA);
+		uint8_t *transbuf = heap_caps_malloc(len, MALLOC_CAP_DMA);
 		if (transbuf == NULL) return;
 
 		memset(transbuf, data[0], len);
 		_dma_send(transbuf, len);
-		free(transbuf);
+		heap_caps_free(transbuf);
 	}
+}
+
+// Bulk send for Module B - select, DC=data, send block, deselect
+void EPD_SendDataBlock(const uint8_t *data, uint32_t len)
+{
+	if (len == 0) return;
+	spi_lobo_device_select(disp_spi, 0);
+	EPD_DC_1;
+	SPI_send_data((uint8_t *)data, len, 0);
+	spi_lobo_device_deselect(disp_spi);
 }
 
 // Send one byte to display
@@ -569,6 +582,11 @@ static void EPD_Dis_Part(uint8_t xStart, uint8_t xEnd, uint16_t yStart, uint16_t
 //=========================
 void EPD_DisplayClearFull()
 {
+#ifdef CONFIG_EPD_MODULE_B
+	/* 2.9" Module (B) - tricolor SSD1680 */
+	EPD_2IN9B_Init();
+	EPD_2IN9B_Clear();
+#else
 	uint8_t m;
 	EPD_init_Full();
 
@@ -588,12 +606,18 @@ void EPD_DisplayClearFull()
 	t1 = clock() - t1;
 	printf("[EPD] Clear white: %u ms\r\n", t1);
 #endif
+#endif
 }
 
 // Partial clear screen
 //=========================
 void EPD_DisplayClearPart()
 {
+#ifdef CONFIG_EPD_MODULE_B
+	/* Module B: full clear only (no partial refresh) */
+	EPD_2IN9B_Clear();
+	return;
+#endif
 	uint8_t m = 0xFF;
 	EPD_init_Part();
 #if EPD_DEBUG

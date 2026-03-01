@@ -6,13 +6,14 @@
 
 #### Features
 
-* Support for **GDEH029A1** / **SSD1608** based ePaper modules in 4-wire SPI mode. Support for other controllers will be added later
+* Support for **GDEH029A1** / **SSD1608** (black/white) and **2.9" Module (B)** / **SSD1680** (red/black/white tricolor) ePaper modules in 4-wire SPI mode
 * **emulated** 4-bit gray scale mode
 * **SPI displays oriented SPI driver library** based on *spi-master* driver
 * Combined **DMA SPI** transfer mode and **direct SPI** for maximal speed
 * **4-bit Grayscale mode** or **1-bit b/w mode** can be selected during runtime
 * SPI speeds up to **20 MHz** are tested and works without problems
 * **Demo application** included which demonstrates most of the library features
+* **WiFi** and **web server** – connects to your network and serves a simple web UI (IP shown on display and at `http://<IP>/`)
 
 
 * **Graphics drawing functions**:
@@ -127,9 +128,9 @@ Execute menuconfig and configure your Serial flash config and other settings. In
 
 Navigate to **ePaper Display DEMO Configuration** and set **SPIFFS** options.
 
-Select if you want to use **wifi** (recommended) to get the time from **NTP** server and set your WiFi SSID and password.
+Select if you want to use **WiFi** (recommended) to get the time from **NTP** and run the web server. Set your WiFi SSID and password in `sdkconfig.defaults` or via `idf.py menuconfig` (e.g. `CONFIG_WIFI_SSID`, `CONFIG_WIFI_PASSWORD`). When enabled, the ESP32 connects to WiFi, fetches time via NTP, and starts an HTTP server on port 80. Visit `http://<device-IP>/` for the status page and `/hello` for a simple response.
 
-`make menuconfig`
+`idf.py menuconfig`  (or `make menuconfig` for older builds)
 
 Make and flash the example.
 

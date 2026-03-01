@@ -15,26 +15,9 @@
 #include "esp_system.h"
 #include "driver/gpio.h"
 #include "esp_system.h"
-#include "esp_heap_alloc_caps.h"
+#include "esp_heap_caps.h"
 #include "spiffs_vfs.h"
 #include "esp_log.h"
-
-#ifdef CONFIG_EXAMPLE_USE_WIFI
-
-#include "esp_wifi.h"
-#include "esp_system.h"
-#include "esp_event.h"
-#include "esp_event_loop.h"
-#include "freertos/event_groups.h"
-#include "esp_attr.h"
-#include <sys/time.h>
-#include <unistd.h>
-#include "lwip/err.h"
-#include "apps/sntp/sntp.h"
-#include "nvs_flash.h"
-
-#endif
-
 
 #include "spi_master_lobo.h"
 #include "img1.h"
@@ -42,7 +25,18 @@
 #include "img3.h"
 #include "img_hacking.c"
 #include "EPD.h"
-//#include "EPDspi.h"
+#ifdef CONFIG_EPD_MODULE_B
+#include "EPD_2in9b.h"
+#include "font_8x8.h"
+#include "arrivals.h"
+#endif
+
+#ifdef CONFIG_EXAMPLE_USE_WIFI
+#include "wifi_server.h"
+#include "nvs_flash.h"
+#include <sys/time.h>
+#include <unistd.h>
+#endif
 
 #define DELAYTIME 1500
 
@@ -51,104 +45,39 @@
 static struct tm* tm_info;
 static char tmp_buff[128];
 static time_t time_now, time_last = 0;
+#if defined(CONFIG_EPD_MODULE_B) && defined(CONFIG_EXAMPLE_USE_WIFI)
+static int wifi_retry_count = 0;
+#endif
 static const char *file_fonts[3] = {"/spiffs/fonts/DotMatrix_M.fon", "/spiffs/fonts/Ubuntu.fon", "/spiffs/fonts/Grotesk24x48.fon"};
 static const char tag[] = "[Eink Demo]";
 
 //==================================================================================
 #ifdef CONFIG_EXAMPLE_USE_WIFI
 
-
-/* FreeRTOS event group to signal when we are connected & ready to make a request */
-static EventGroupHandle_t wifi_event_group;
-
-/* The event group allows multiple bits for each event,
-   but we only care about one event - are we connected
-   to the AP with an IP? */
-const int CONNECTED_BIT = 0x00000001;
-
-//------------------------------------------------------------
-static esp_err_t event_handler(void *ctx, system_event_t *event)
-{
-    switch(event->event_id) {
-    case SYSTEM_EVENT_STA_START:
-        esp_wifi_connect();
-        break;
-    case SYSTEM_EVENT_STA_GOT_IP:
-        xEventGroupSetBits(wifi_event_group, CONNECTED_BIT);
-        break;
-    case SYSTEM_EVENT_STA_DISCONNECTED:
-        /* This is a workaround as ESP32 WiFi libs don't currently
-           auto-reassociate. */
-        esp_wifi_connect();
-        xEventGroupClearBits(wifi_event_group, CONNECTED_BIT);
-        break;
-    default:
-        break;
-    }
-    return ESP_OK;
-}
-
-//-------------------------------
-static void initialise_wifi(void)
-{
-    tcpip_adapter_init();
-    wifi_event_group = xEventGroupCreate();
-    ESP_ERROR_CHECK( esp_event_loop_init(event_handler, NULL) );
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK( esp_wifi_init(&cfg) );
-    ESP_ERROR_CHECK( esp_wifi_set_storage(WIFI_STORAGE_RAM) );
-    wifi_config_t wifi_config = {
-        .sta = {
-            .ssid = CONFIG_WIFI_SSID,
-            .password = CONFIG_WIFI_PASSWORD,
-        },
-    };
-    ESP_LOGI(tag, "Setting WiFi configuration SSID %s...", wifi_config.sta.ssid);
-    ESP_ERROR_CHECK( esp_wifi_set_mode(WIFI_MODE_STA) );
-    ESP_ERROR_CHECK( esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config) );
-    ESP_ERROR_CHECK( esp_wifi_start() );
-}
-
-//-------------------------------
-static void initialize_sntp(void)
-{
-    ESP_LOGI(tag, "Initializing SNTP");
-    sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    sntp_setservername(0, "pool.ntp.org");
-    sntp_init();
-}
-
-//--------------------------
 static int obtain_time(void)
 {
-	int res = 1;
-    initialise_wifi();
-    xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT, false, true, portMAX_DELAY);
+    int res = 1;
+    wifi_server_init(CONFIG_WIFI_SSID, CONFIG_WIFI_PASSWORD);
+    wifi_server_wait_connected();
+    wifi_server_print_ip();
+    wifi_server_init_sntp();
 
-    initialize_sntp();
-
-    // wait for time to be set
     int retry = 0;
     const int retry_count = 20;
-
     time(&time_now);
-	tm_info = localtime(&time_now);
+    tm_info = localtime(&time_now);
 
-    while(tm_info->tm_year < (2016 - 1900) && ++retry < retry_count) {
-        //ESP_LOGI(tag, "Waiting for system time to be set... (%d/%d)", retry, retry_count);
-		vTaskDelay(500 / portTICK_RATE_MS);
+    while (tm_info->tm_year < (2016 - 1900) && ++retry < retry_count) {
+        vTaskDelay(500 / portTICK_RATE_MS);
         time(&time_now);
-    	tm_info = localtime(&time_now);
+        tm_info = localtime(&time_now);
     }
     if (tm_info->tm_year < (2016 - 1900)) {
-    	ESP_LOGI(tag, "System time NOT set.");
-    	res = 0;
+        ESP_LOGI(tag, "System time NOT set.");
+        res = 0;
+    } else {
+        ESP_LOGI(tag, "System time is set.");
     }
-    else {
-    	ESP_LOGI(tag, "System time is set.");
-    }
-
-    ESP_ERROR_CHECK( esp_wifi_stop() );
     return res;
 }
 
@@ -164,11 +93,11 @@ void app_main()
 
     esp_err_t ret;
 
-	disp_buffer = pvPortMallocCaps(EPD_DISPLAY_WIDTH * (EPD_DISPLAY_HEIGHT/8), MALLOC_CAP_DMA);
+	disp_buffer = heap_caps_malloc(EPD_DISPLAY_WIDTH * (EPD_DISPLAY_HEIGHT/8), MALLOC_CAP_DMA);
 	assert(disp_buffer);
 	drawBuff = disp_buffer;
 
-	gs_disp_buffer = pvPortMallocCaps(EPD_DISPLAY_WIDTH * EPD_DISPLAY_HEIGHT, MALLOC_CAP_DMA);
+	gs_disp_buffer = heap_caps_malloc(EPD_DISPLAY_WIDTH * EPD_DISPLAY_HEIGHT, MALLOC_CAP_DMA);
 	assert(gs_disp_buffer);
 	gs_drawBuff = gs_disp_buffer;
 
@@ -195,8 +124,12 @@ void app_main()
 		.max_transfer_sz = 5*1024,		// max transfer size is 4736 bytes
     };
     spi_lobo_device_interface_config_t devcfg={
-        .clock_speed_hz=40000000,		// SPI clock is 40 MHz
-        .mode=0,						// SPI mode 0
+#ifdef CONFIG_EPD_MODULE_B
+        .clock_speed_hz=4000000,		// Module B: 4 MHz for stability (40 MHz can cause blobs)
+#else
+        .clock_speed_hz=40000000,		// SPI clock: try 4000000 if display fails
+#endif
+        .mode=0,						// SPI mode 0; try 1 or 3 if display fails
         .spics_io_num=-1,				// we will use external CS pin
 		.spics_ext_io_num = CS_Pin,		// external CS pin
 		.flags=SPI_DEVICE_HALFDUPLEX,	// ALWAYS SET  to HALF DUPLEX MODE for display spi !!
@@ -207,7 +140,7 @@ void app_main()
 
 	vTaskDelay(500 / portTICK_RATE_MS);
 	printf("\r\n=================================\r\n");
-    printf("ePaper display DEMO, LoBo 06/2017\r\n");
+    printf("ePaper display DEMO, LoBo 06/2017, build " __DATE__ " " __TIME__ "\r\n");
 	printf("=================================\r\n\r\n");
 
 	// ==================================================================
@@ -233,6 +166,430 @@ void app_main()
 
 	EPD_DisplayClearFull();
 
+#ifdef CONFIG_EPD_MODULE_B
+	/* Show "Booting" immediately so user sees activity */
+	{
+		const int W = EPD_2IN9B_WIDTH;
+		const int H = EPD_2IN9B_HEIGHT;
+		const int BUF_SIZE = (W / 8) * H;
+		const int CW = FONT_8X8_CHAR_W + 1;
+		uint8_t *bb = heap_caps_malloc(BUF_SIZE, MALLOC_CAP_DMA);
+		uint8_t *rb = heap_caps_malloc(BUF_SIZE, MALLOC_CAP_DMA);
+		if (bb && rb) {
+			memset(bb, 0xFF, BUF_SIZE);
+#ifdef CONFIG_EPD_2IN9B_V4
+			memset(rb, 0x00, BUF_SIZE);
+#else
+			memset(rb, 0xFF, BUF_SIZE);
+#endif
+			/* Draw "Booting" centered */
+			const char *msg = "Booting";
+			int mw = 7 * CW;
+			int tx = (W - mw) / 2;
+			int ty = (H - FONT_8X8_CHAR_H) / 2;
+			for (const char *s = msg; *s; s++, tx += CW) {
+				unsigned char ch = (unsigned char)*s;
+				if (ch < FONT_8X8_FIRST || ch >= FONT_8X8_FIRST + FONT_8X8_COUNT) continue;
+				const uint8_t *g = font_8x8[ch - FONT_8X8_FIRST];
+				for (int r = 0; r < FONT_8X8_CHAR_H; r++)
+					for (int c = 0; c < FONT_8X8_CHAR_W; c++)
+						if (g[r] & (0x80 >> c)) {
+							int px = tx + c, py = ty + r;
+							if (px >= 0 && px < W && py >= 0 && py < H) {
+								int bi = (py * (W/8)) + (px/8);
+								bb[bi] &= ~(0x80 >> (px % 8));
+							}
+						}
+			}
+			EPD_2IN9B_Display(bb, rb);
+			heap_caps_free(bb);
+			heap_caps_free(rb);
+		}
+	}
+#endif
+
+#if defined(CONFIG_EPD_MODULE_B) && defined(CONFIG_EXAMPLE_USE_WIFI)
+	/* WiFi + Module B: connect (30s timeout), NTP, print IP */
+	ESP_ERROR_CHECK(nvs_flash_init());
+	wifi_server_init(CONFIG_WIFI_SSID, CONFIG_WIFI_PASSWORD);
+	if (!wifi_server_wait_connected_timeout(30000)) {
+		/* Connection failed - show "No WiFi N" */
+		wifi_retry_count++;
+		{
+			const int W = EPD_2IN9B_WIDTH;
+			const int H = EPD_2IN9B_HEIGHT;
+			const int BUF_SIZE = (W / 8) * H;
+			const int CW = FONT_8X8_CHAR_W + 1;
+			uint8_t *bb = heap_caps_malloc(BUF_SIZE, MALLOC_CAP_DMA);
+			uint8_t *rb = heap_caps_malloc(BUF_SIZE, MALLOC_CAP_DMA);
+			if (bb && rb) {
+				memset(bb, 0xFF, BUF_SIZE);
+#ifdef CONFIG_EPD_2IN9B_V4
+				memset(rb, 0x00, BUF_SIZE);
+#else
+				memset(rb, 0xFF, BUF_SIZE);
+#endif
+				char msg[24];
+				snprintf(msg, sizeof(msg), "No WiFi %d", wifi_retry_count);
+				int mw = (int)strlen(msg) * CW;
+				int tx = (W - mw) / 2;
+				int ty = (H - FONT_8X8_CHAR_H) / 2;
+				for (const char *s = msg; *s; s++, tx += CW) {
+					unsigned char ch = (unsigned char)*s;
+					if (ch < FONT_8X8_FIRST || ch >= FONT_8X8_FIRST + FONT_8X8_COUNT) continue;
+					const uint8_t *g = font_8x8[ch - FONT_8X8_FIRST];
+					for (int r = 0; r < FONT_8X8_CHAR_H; r++)
+						for (int c = 0; c < FONT_8X8_CHAR_W; c++)
+							if (g[r] & (0x80 >> c)) {
+								int px = tx + c, py = ty + r;
+								if (px >= 0 && px < W && py >= 0 && py < H) {
+									int bi = (py * (W/8)) + (px/8);
+									bb[bi] &= ~(0x80 >> (px % 8));
+								}
+							}
+				}
+				EPD_2IN9B_Display(bb, rb);
+				heap_caps_free(bb);
+				heap_caps_free(rb);
+			}
+		}
+		printf("WiFi connection timeout - no arrivals will be shown\r\n");
+	} else {
+		wifi_server_print_ip();
+		wifi_server_init_sntp();
+		setenv("TZ", "GMT0BST,M3.5.0/1,M10.5.0", 0);
+		tzset();
+		wifi_server_start_http();
+	}
+#endif
+
+#ifdef CONFIG_EPD_MODULE_B
+	/* Module B: Cache last result for 5 min on fetch failure. Decrement TTL manually.
+	 * After 5 min without success: show red "Connection lost" */
+	{
+		const int W = EPD_2IN9B_WIDTH;
+		const int H = EPD_2IN9B_HEIGHT;
+		const int BUF_SIZE = (W / 8) * H;
+		const int CW = FONT_8X8_CHAR_W + 1;       /* 9px per char, small */
+		const int CW_X2 = (FONT_8X8_CHAR_W * 2) + 2;  /* 18px per char, 2x scaled */
+		const int LH = FONT_8X8_CHAR_H + 1;       /* 10px line, small */
+		const int LH_X2 = (FONT_8X8_CHAR_H * 2) + 2; /* 18px line, 2x */
+		const int PAD_RIGHT = 2;                  /* pixels between dest and number */
+		const uint32_t STALE_MS = 5 * 60 * 1000;  /* 5 minutes */
+		const uint32_t REBOOT_NO_CONN_MS = 5 * 60 * 1000;  /* reboot after 5 min no connectivity */
+		uint8_t *last_black = NULL;
+		uint8_t *last_red = NULL;
+		arrival_t cached_arr[ARRIVALS_MAX];
+		int cached_n = 0;
+		char cached_time[8] = "--:--";
+		TickType_t last_fetch_tick = 0;
+		TickType_t no_connectivity_start = 0;  /* when we first had no connectivity */
+		int has_cache = 0;
+
+		#define DRAW_STR(buf, s, sx, sy) do { \
+			const char *_s = (s); \
+			int _x = (sx); \
+			for (; *_s && _x < W; _s++, _x += CW) { \
+				unsigned char _ch = (unsigned char)*_s; \
+				if (_ch < FONT_8X8_FIRST || _ch >= FONT_8X8_FIRST + FONT_8X8_COUNT) continue; \
+				const uint8_t *_g = font_8x8[_ch - FONT_8X8_FIRST]; \
+				for (int _r = 0; _r < FONT_8X8_CHAR_H; _r++) { \
+					for (int _col = 0; _col < FONT_8X8_CHAR_W; _col++) { \
+						if (_g[_r] & (0x80 >> _col)) { \
+							int _px = _x + _col, _py = (sy) + _r; \
+							if (_px >= 0 && _px < W && _py >= 0 && _py < H) { \
+								int _bi = (_py * (W/8)) + (_px/8); \
+								(buf)[_bi] &= ~(0x80 >> (_px % 8)); \
+							} \
+						} \
+					} \
+				} \
+			} \
+		} while(0)
+
+		#define DRAW_STR_RED(rbuf, s, sx, sy) do { \
+			const char *_s = (s); \
+			int _x = (sx); \
+			for (; *_s && _x < W; _s++, _x += CW) { \
+				unsigned char _ch = (unsigned char)*_s; \
+				if (_ch < FONT_8X8_FIRST || _ch >= FONT_8X8_FIRST + FONT_8X8_COUNT) continue; \
+				const uint8_t *_g = font_8x8[_ch - FONT_8X8_FIRST]; \
+				for (int _r = 0; _r < FONT_8X8_CHAR_H; _r++) { \
+					for (int _col = 0; _col < FONT_8X8_CHAR_W; _col++) { \
+						if (_g[_r] & (0x80 >> _col)) { \
+							int _px = _x + _col, _py = (sy) + _r; \
+							if (_px >= 0 && _px < W && _py >= 0 && _py < H) { \
+								int _bi = (_py * (W/8)) + (_px/8); \
+								(rbuf)[_bi] &= ~(0x80 >> (_px % 8)); \
+							} \
+						} \
+					} \
+				} \
+			} \
+		} while(0)
+
+		/* 2x scaled: each 8x8 pixel becomes 2x2 for bigger numbers */
+		#define DRAW_STR_X2(buf, s, sx, sy) do { \
+			const char *_s = (s); \
+			int _x = (sx); \
+			for (; *_s && _x < W; _s++, _x += CW_X2) { \
+				unsigned char _ch = (unsigned char)*_s; \
+				if (_ch < FONT_8X8_FIRST || _ch >= FONT_8X8_FIRST + FONT_8X8_COUNT) continue; \
+				const uint8_t *_g = font_8x8[_ch - FONT_8X8_FIRST]; \
+				for (int _r = 0; _r < FONT_8X8_CHAR_H; _r++) { \
+					for (int _col = 0; _col < FONT_8X8_CHAR_W; _col++) { \
+						if (_g[_r] & (0x80 >> _col)) { \
+							int _bx = _x + _col * 2, _by = (sy) + _r * 2; \
+							for (int _dy = 0; _dy < 2; _dy++) for (int _dx = 0; _dx < 2; _dx++) { \
+								int _px = _bx + _dx, _py = _by + _dy; \
+								if (_px >= 0 && _px < W && _py >= 0 && _py < H) { \
+									int _bi = (_py * (W/8)) + (_px/8); \
+									(buf)[_bi] &= ~(0x80 >> (_px % 8)); \
+								} \
+							} \
+						} \
+					} \
+				} \
+			} \
+		} while(0)
+
+#if defined(CONFIG_EXAMPLE_USE_WIFI)
+		vTaskDelay(3000 / portTICK_RATE_MS);  /* Allow NTP to sync */
+#endif
+
+		while (1) {
+			uint8_t *black_buf = heap_caps_malloc(BUF_SIZE, MALLOC_CAP_DMA);
+			uint8_t *red_buf = heap_caps_malloc(BUF_SIZE, MALLOC_CAP_DMA);
+			if (!black_buf || !red_buf) {
+				if (black_buf) heap_caps_free(black_buf);
+				if (red_buf) heap_caps_free(red_buf);
+				vTaskDelay(10000 / portTICK_RATE_MS);
+				continue;
+			}
+			memset(black_buf, 0xFF, BUF_SIZE);
+#ifdef CONFIG_EPD_2IN9B_V4
+			memset(red_buf, 0x00, BUF_SIZE);
+#else
+			memset(red_buf, 0xFF, BUF_SIZE);
+#endif
+
+			char time_str[8] = "--:--";
+			arrival_t arr[ARRIVALS_MAX];
+			int n = arrivals_fetch(arr, ARRIVALS_MAX, time_str, sizeof(time_str));
+
+			int elapsed_sec = 0;
+			if (n > 0) {
+				/* Success: update cache */
+				has_cache = 1;
+				no_connectivity_start = 0;
+				last_fetch_tick = xTaskGetTickCount();
+				cached_n = n;
+				memcpy(cached_arr, arr, n * sizeof(arrival_t));
+				strncpy(cached_time, time_str, sizeof(cached_time) - 1);
+				cached_time[sizeof(cached_time) - 1] = '\0';
+			} else if (has_cache) {
+				/* Failure: use cache with decremented TTLs */
+				elapsed_sec = (int)((xTaskGetTickCount() - last_fetch_tick) * portTICK_RATE_MS / 1000);
+				uint32_t elapsed_ms = (uint32_t)(xTaskGetTickCount() - last_fetch_tick) * portTICK_RATE_MS;
+				if (elapsed_ms >= STALE_MS) {
+					/* Cache expired: show red "Connection lost", retry WiFi, reboot after 5 min */
+					has_cache = 0;
+					if (no_connectivity_start == 0)
+						no_connectivity_start = last_fetch_tick;
+					const char *msg = "Connection lost";
+					int mw = 14 * CW;
+					int tx = (W - mw) / 2;
+					int ty = (H - FONT_8X8_CHAR_H) / 2;
+					DRAW_STR_RED(red_buf, msg, tx, ty);
+					EPD_2IN9B_Display(black_buf, red_buf);
+					if (last_black && last_red) {
+						memcpy(last_black, black_buf, BUF_SIZE);
+						memcpy(last_red, red_buf, BUF_SIZE);
+					} else if (!last_black) {
+						last_black = heap_caps_malloc(BUF_SIZE, MALLOC_CAP_DMA);
+						last_red = heap_caps_malloc(BUF_SIZE, MALLOC_CAP_DMA);
+						if (last_black && last_red) {
+							memcpy(last_black, black_buf, BUF_SIZE);
+							memcpy(last_red, red_buf, BUF_SIZE);
+						}
+					}
+					heap_caps_free(black_buf);
+					heap_caps_free(red_buf);
+					printf("Module B: Connection lost, retrying WiFi...\r\n");
+					wifi_server_reconnect();
+					if (wifi_server_wait_connected_timeout(15000)) {
+						no_connectivity_start = 0;
+						printf("Module B: WiFi reconnected\r\n");
+					} else {
+						uint32_t no_conn_ms = (uint32_t)(xTaskGetTickCount() - no_connectivity_start) * portTICK_RATE_MS;
+						if (no_conn_ms >= REBOOT_NO_CONN_MS) {
+							printf("Module B: No connectivity for 5 min, rebooting\r\n");
+							esp_restart();
+						}
+					}
+					vTaskDelay(10000 / portTICK_RATE_MS);
+					continue;
+				}
+				n = cached_n;
+				memcpy(arr, cached_arr, n * sizeof(arrival_t));
+				strncpy(time_str, cached_time, sizeof(time_str) - 1);
+				time_str[sizeof(time_str) - 1] = '\0';
+				/* Decrement TTLs by elapsed */
+				for (int i = 0; i < n; i++) {
+					arr[i].ttl_sec -= elapsed_sec;
+					if (arr[i].ttl_sec < 0) arr[i].ttl_sec = 0;
+				}
+			} else {
+				/* No cache: retry WiFi, show attempt count, reboot after 5 min */
+				heap_caps_free(black_buf);
+				heap_caps_free(red_buf);
+				if (no_connectivity_start == 0)
+					no_connectivity_start = xTaskGetTickCount();
+				wifi_retry_count++;
+				{
+					char msg[24];
+					snprintf(msg, sizeof(msg), "No WiFi %d", wifi_retry_count);
+					uint8_t *nb = heap_caps_malloc(BUF_SIZE, MALLOC_CAP_DMA);
+					uint8_t *nr = heap_caps_malloc(BUF_SIZE, MALLOC_CAP_DMA);
+					if (nb && nr) {
+						memset(nb, 0xFF, BUF_SIZE);
+#ifdef CONFIG_EPD_2IN9B_V4
+						memset(nr, 0x00, BUF_SIZE);
+#else
+						memset(nr, 0xFF, BUF_SIZE);
+#endif
+						int mw = (int)strlen(msg) * CW;
+						int tx = (W - mw) / 2;
+						int ty = (H - FONT_8X8_CHAR_H) / 2;
+						DRAW_STR(nb, msg, tx, ty);
+						EPD_2IN9B_Display(nb, nr);
+						if (last_black && last_red) {
+							memcpy(last_black, nb, BUF_SIZE);
+							memcpy(last_red, nr, BUF_SIZE);
+						}
+						heap_caps_free(nb);
+						heap_caps_free(nr);
+					}
+				}
+				printf("Module B: fetch failed, retry #%d\r\n", wifi_retry_count);
+				wifi_server_reconnect();
+				if (wifi_server_wait_connected_timeout(15000)) {
+					no_connectivity_start = 0;
+					wifi_retry_count = 0;
+					printf("Module B: WiFi reconnected\r\n");
+				} else {
+					uint32_t no_conn_ms = (uint32_t)(xTaskGetTickCount() - no_connectivity_start) * portTICK_RATE_MS;
+					if (no_conn_ms >= REBOOT_NO_CONN_MS) {
+						printf("Module B: No connectivity for 5 min, rebooting\r\n");
+						esp_restart();
+					}
+				}
+				vTaskDelay(10000 / portTICK_RATE_MS);
+				continue;
+			}
+
+			/* Numbers right-aligned, 2x size. "5m" or "12m" = 2-3 chars, use 3 for "99m" */
+			const int NUM_W = 3 * CW_X2;
+			const int NUM_X = W - PAD_RIGHT - NUM_W;
+			const int DEST_CHARS = 7;     /* Elizabeth/DLR: "  " + 7 chars fits before number */
+			const int OTHER_PREFIX = 5;   /* "  SE " or "  TL " */
+
+			int y = 2;
+			DRAW_STR_X2(black_buf, time_str, (W - 5*CW_X2) / 2, y);
+			y += LH_X2 + 4;
+			DRAW_STR(black_buf, "Woolwich", (W - 8*CW) / 2, y);
+			y += LH + LH;
+
+			#define DRAW_SECTION(title, line_substr, max_count) do { \
+				DRAW_STR(black_buf, (title), 2, y); \
+				y += LH; \
+				int _drawn = 0; \
+				for (int _i = 0; _i < n && _drawn < (max_count); _i++) { \
+					if (strstr(arr[_i].line, (line_substr))) { \
+						char _d[8]; \
+						strncpy(_d, arr[_i].destination, DEST_CHARS); \
+						_d[DEST_CHARS] = '\0'; \
+						int _m = arr[_i].ttl_sec / 60; \
+						if (_m < 0) _m = 0; \
+						if (_m > 99) _m = 99; \
+						char _num[12]; \
+						snprintf(_num, sizeof(_num), "%dm", (int)(_m < 0 ? 0 : (_m > 99 ? 99 : _m))); \
+						DRAW_STR(black_buf, "  ", 2, y); \
+						DRAW_STR(black_buf, _d, 2 + 2*CW, y); \
+						DRAW_STR_X2(black_buf, _num, NUM_X, y); \
+						y += LH_X2; \
+						_drawn++; \
+					} \
+				} \
+				y += LH; \
+			} while(0)
+
+			DRAW_SECTION("Elizabeth", "Elizabeth", 3);
+			DRAW_SECTION("DLR", "DLR", 2);
+			DRAW_STR(black_buf, "Other", 2, y);
+			y += LH;
+			int others = 0;
+			for (int i = 0; i < n && others < 2; i++) {
+				if (!strstr(arr[i].line, "Elizabeth") && !strstr(arr[i].line, "DLR")) {
+					char d[8];
+					strncpy(d, arr[i].destination, DEST_CHARS - 2);  /* less for "SE "/"TL " */
+					d[DEST_CHARS - 2] = '\0';
+					int m = arr[i].ttl_sec / 60;
+					if (m < 0) m = 0;
+					if (m > 99) m = 99;
+					char num[12];
+					snprintf(num, sizeof(num), "%dm", (int)(m < 0 ? 0 : (m > 99 ? 99 : m)));
+					const char *abbr = strstr(arr[i].line, "Southeastern") ? "SE" : \
+					                  strstr(arr[i].line, "Thameslink") ? "TL" : "?";
+					DRAW_STR(black_buf, "  ", 2, y);
+					DRAW_STR(black_buf, abbr, 2 + 2*CW, y);
+					DRAW_STR(black_buf, " ", 2 + 4*CW, y);
+					DRAW_STR(black_buf, d, 2 + OTHER_PREFIX*CW, y);
+					DRAW_STR_X2(black_buf, num, NUM_X, y);
+					y += LH_X2;
+					others++;
+				}
+			}
+			#undef DRAW_SECTION
+
+#if defined(CONFIG_EXAMPLE_USE_WIFI)
+			char ip_str[16];
+			if (wifi_server_get_ip(ip_str, sizeof(ip_str))) {
+				DRAW_STR(black_buf, ip_str, 2, H - LH - 2);
+			}
+#endif
+
+			int need_refresh = 1;
+			if (last_black && last_red) {
+				if (memcmp(black_buf, last_black, BUF_SIZE) == 0 &&
+				    memcmp(red_buf, last_red, BUF_SIZE) == 0) {
+					need_refresh = 0;
+				}
+			}
+			if (need_refresh) {
+				EPD_2IN9B_Display(black_buf, red_buf);
+				if (!last_black) {
+					last_black = heap_caps_malloc(BUF_SIZE, MALLOC_CAP_DMA);
+					last_red = heap_caps_malloc(BUF_SIZE, MALLOC_CAP_DMA);
+				}
+				if (last_black && last_red) {
+					memcpy(last_black, black_buf, BUF_SIZE);
+					memcpy(last_red, red_buf, BUF_SIZE);
+				}
+			}
+			heap_caps_free(black_buf);
+			heap_caps_free(red_buf);
+
+			printf("Module B: %d arrivals%s%s, next in 10s\r\n",
+				n, need_refresh ? " (refreshed)" : "", elapsed_sec ? " (cached)" : "");
+			vTaskDelay(10000 / portTICK_RATE_MS);
+		}
+		#undef DRAW_STR
+		#undef DRAW_STR_RED
+		#undef DRAW_STR_X2
+	}
+#endif
+
 #ifdef CONFIG_EXAMPLE_USE_WIFI
 
     ESP_ERROR_CHECK( nvs_flash_init() );
@@ -254,15 +611,20 @@ void app_main()
     time(&time_now);
 	tm_info = localtime(&time_now);
 
-	// Is time set? If not, tm_year will be (1970 - 1900).
+    // Is time set? If not, tm_year will be (1970 - 1900).
     if (tm_info->tm_year < (2016 - 1900)) {
         ESP_LOGI(tag, "Time is not set yet. Connecting to WiFi and getting time over NTP.");
-        if (obtain_time()) {
-        }
-        else {
-        }
+        obtain_time();
         time(&time_now);
     }
+    else {
+        /* Time already set, connect WiFi for web server */
+        wifi_server_init(CONFIG_WIFI_SSID, CONFIG_WIFI_PASSWORD);
+        wifi_server_wait_connected();
+        wifi_server_print_ip();
+    }
+    /* Start web server (WiFi stays connected) */
+    wifi_server_start_http();
 #endif
 
     // ==== Initialize the file system ====
