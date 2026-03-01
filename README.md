@@ -166,6 +166,12 @@ to create **spiffs image** in *build* directory and **flash** it to ESP32
 
 ---
 
+#### Module B display flashing (inverted / multiple flashes)
+
+If the 2.9" tricolor display shows inverted colors during refresh or flashes many times (~10) before settling, try **CONFIG_EPD_2IN9B_LUT_C7** in `idf.py menuconfig` → ePaper Display DEMO Configuration. This uses LUT 0xC7 instead of 0xF7 and may reduce the effect. The multiple flashes are normal e-paper behavior (each LUT phase causes a visible transition).
+
+---
+
 Tested on Waveshare 2.9" ePaper module connected to SparkFun ESP32 Thing board.
 ![Tested on](https://raw.githubusercontent.com/loboris/ESP32_ePaper_example/master/Documents/2.9inch-e-paper-module-4.jpg)
 

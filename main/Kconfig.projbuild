@@ -16,6 +16,14 @@ config EPD_2IN9B_V4
         Use V4 init sequence. Check label on back of display - V4 uses
         different commands. Try this if you get random blinks/blobs.
 
+config EPD_2IN9B_LUT_C7
+    bool "Use 0xC7 LUT for refresh (may reduce inverted flashing)"
+    depends on EPD_MODULE_B
+    default y
+    help
+        Use 0xC7 instead of 0xF7 for display update. Try if you see
+        inverted colors during refresh or excessive flashing.
+
 config SPIFFS_BASE_ADDR
     hex "SPIFFS Base address"
     range 0x100000 0x1FFE000

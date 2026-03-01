@@ -274,7 +274,8 @@ void app_main()
 		const int CW_X2 = (FONT_8X8_CHAR_W * 2) + 2;  /* 18px per char, 2x scaled */
 		const int LH = FONT_8X8_CHAR_H + 1;       /* 10px line, small */
 		const int LH_X2 = (FONT_8X8_CHAR_H * 2) + 2; /* 18px line, 2x */
-		const int PAD_RIGHT = 2;                  /* pixels between dest and number */
+		const int PAD_RIGHT = 0;                  /* right edge - 0 = flush to display edge */
+		const int SECTION_TOP_PAD = 6;            /* extra pixels between section title and first item */
 		const uint32_t STALE_MS = 5 * 60 * 1000;  /* 5 minutes */
 		const uint32_t REBOOT_NO_CONN_MS = 5 * 60 * 1000;  /* reboot after 5 min no connectivity */
 		uint8_t *last_black = NULL;
@@ -488,11 +489,10 @@ void app_main()
 				continue;
 			}
 
-			/* Numbers right-aligned, 2x size. "5m" or "12m" = 2-3 chars, use 3 for "99m" */
-			const int NUM_W = 3 * CW_X2;
-			const int NUM_X = W - PAD_RIGHT - NUM_W;
-			const int DEST_CHARS = 7;     /* Elizabeth/DLR: "  " + 7 chars fits before number */
-			const int OTHER_PREFIX = 5;   /* "  SE " or "  TL " */
+			/* Numbers right-aligned, 2x size, no "m" - just "5" or "12" */
+			const int NUM_RIGHT = W - PAD_RIGHT;
+			const int DEST_CHARS = 8;     /* " " + 8 chars fits before number */
+			const int OTHER_PREFIX = 4;   /* " SE " or " TL " */
 
 			int y = 2;
 			DRAW_STR_X2(black_buf, time_str, (W - 5*CW_X2) / 2, y);
@@ -506,17 +506,19 @@ void app_main()
 				int _drawn = 0; \
 				for (int _i = 0; _i < n && _drawn < (max_count); _i++) { \
 					if (strstr(arr[_i].line, (line_substr))) { \
-						char _d[8]; \
+						char _d[9]; \
 						strncpy(_d, arr[_i].destination, DEST_CHARS); \
 						_d[DEST_CHARS] = '\0'; \
 						int _m = arr[_i].ttl_sec / 60; \
 						if (_m < 0) _m = 0; \
 						if (_m > 99) _m = 99; \
 						char _num[12]; \
-						snprintf(_num, sizeof(_num), "%dm", (int)(_m < 0 ? 0 : (_m > 99 ? 99 : _m))); \
-						DRAW_STR(black_buf, "  ", 2, y); \
-						DRAW_STR(black_buf, _d, 2 + 2*CW, y); \
-						DRAW_STR_X2(black_buf, _num, NUM_X, y); \
+						snprintf(_num, sizeof(_num), "%d", (int)(_m < 0 ? 0 : (_m > 99 ? 99 : _m))); \
+						int _nw = (int)strlen(_num) * CW_X2; \
+						int _nx = NUM_RIGHT - _nw; \
+						DRAW_STR(black_buf, " ", 2, y); \
+						DRAW_STR(black_buf, _d, 2 + CW, y); \
+						DRAW_STR_X2(black_buf, _num, _nx, y); \
 						y += LH_X2; \
 						_drawn++; \
 					} \
@@ -527,25 +529,27 @@ void app_main()
 			DRAW_SECTION("Elizabeth", "Elizabeth", 3);
 			DRAW_SECTION("DLR", "DLR", 2);
 			DRAW_STR(black_buf, "Other", 2, y);
-			y += LH;
+			y += LH + SECTION_TOP_PAD;
 			int others = 0;
 			for (int i = 0; i < n && others < 2; i++) {
 				if (!strstr(arr[i].line, "Elizabeth") && !strstr(arr[i].line, "DLR")) {
-					char d[8];
-					strncpy(d, arr[i].destination, DEST_CHARS - 2);  /* less for "SE "/"TL " */
+					char d[9];
+					strncpy(d, arr[i].destination, DEST_CHARS - 2);
 					d[DEST_CHARS - 2] = '\0';
 					int m = arr[i].ttl_sec / 60;
 					if (m < 0) m = 0;
 					if (m > 99) m = 99;
 					char num[12];
-					snprintf(num, sizeof(num), "%dm", (int)(m < 0 ? 0 : (m > 99 ? 99 : m)));
+					snprintf(num, sizeof(num), "%d", (int)(m < 0 ? 0 : (m > 99 ? 99 : m)));
+					int nw = (int)strlen(num) * CW_X2;
+					int nx = NUM_RIGHT - nw;
 					const char *abbr = strstr(arr[i].line, "Southeastern") ? "SE" : \
 					                  strstr(arr[i].line, "Thameslink") ? "TL" : "?";
-					DRAW_STR(black_buf, "  ", 2, y);
-					DRAW_STR(black_buf, abbr, 2 + 2*CW, y);
-					DRAW_STR(black_buf, " ", 2 + 4*CW, y);
+					DRAW_STR(black_buf, " ", 2, y);
+					DRAW_STR(black_buf, abbr, 2 + CW, y);
+					DRAW_STR(black_buf, " ", 2 + 3*CW, y);
 					DRAW_STR(black_buf, d, 2 + OTHER_PREFIX*CW, y);
-					DRAW_STR_X2(black_buf, num, NUM_X, y);
+					DRAW_STR_X2(black_buf, num, nx, y);
 					y += LH_X2;
 					others++;
 				}

@@ -154,7 +154,13 @@ void EPD_2IN9B_Clear(void)
     SendCmd(0x26);
     EPD_SendDataBlock(buf, w * h);
     SendCmd(0x22);
-    SendData(0xF7);
+    SendData(
+#ifdef CONFIG_EPD_2IN9B_LUT_C7
+        0xC7  /* alternate LUT - may reduce inverted flashing */
+#else
+        0xF7  /* full refresh LUT */
+#endif
+    );
     SendCmd(0x20);
     ReadBusy_V4();
 #else
@@ -189,7 +195,13 @@ void EPD_2IN9B_Display(const uint8_t *blackimage, const uint8_t *ryimage)
         }
     }
     SendCmd(0x22);
-    SendData(0xF7);
+    SendData(
+#ifdef CONFIG_EPD_2IN9B_LUT_C7
+        0xC7  /* alternate LUT - may reduce inverted flashing */
+#else
+        0xF7  /* full refresh LUT */
+#endif
+    );
     SendCmd(0x20);
     ReadBusy_V4();
 #else
